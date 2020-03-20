@@ -26,7 +26,8 @@ int main() {
     fflush(stdout);
     if (connect(sock_fd, (struct sockaddr*)&addr, sizeof(addr)) == -1)
     {
-	fprintf(stderr, "Error connecting: %s\n", strerror(errno));
+        //fprintf(stderr, "Error connecting: %s\n", strerror(errno));
+        perror("Error connecting");
 	exit(EXIT_FAILURE);
     }
 

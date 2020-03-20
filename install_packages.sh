@@ -13,6 +13,7 @@ if [[ "${DISTRO}" == 'Fedora' ]]; then
 						  libconfig-devel \
 						  libevent-devel \
 						  libnl3-devel \
+						  libssl-dev \
 						  libnotify-devel \
 						  openssl-devel \
 						  qrencode \
@@ -31,6 +32,7 @@ if [[ "${DISTRO}" == '"Ubuntu"' ]]; then
 						  libglib2.0-dev \
 						  libnl-3-dev \
 						  libnl-genl-3-dev \
+						  libssl-dev \
 						  libnotify-dev \
 						  linux-headers-$(uname -r | sed 's/[0-9\.\-]*//') \
 						  openssl \

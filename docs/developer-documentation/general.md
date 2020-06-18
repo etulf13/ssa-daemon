@@ -145,3 +145,5 @@ _Blue numbered circles reference explanations above_
 	<img src="diagrams/step15.png" width="300">
 
 	_The client-server connection is now over_
+
+## Netlink Communication

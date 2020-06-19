@@ -37,7 +37,7 @@ int verify_ocsp_basicresp(OCSP_BASICRESP* resp,
 int do_ocsp_response_checks(unsigned char* resp_bytes,
 		 int resp_len, socket_ctx* sock_ctx);
 
-int do_crl_response_checks(X509_CRL* response, SSL* ssl);
+int do_crl_response_checks(X509_CRL* crl, SSL* tls, X509* subject, X509* issuer, int* response);
 
 
 
@@ -47,5 +47,10 @@ int add_to_ocsp_cache(OCSP_CERTID* id,
 		OCSP_BASICRESP* response, daemon_ctx* daemon);
 
 int check_cached_response(socket_ctx* sock_ctx);
+
+int crl_parse_url(const char *url, char **host, char **port, char **path, int *ssl);
+
+int crl_check_times(const ASN1_TIME* thisupd,
+		const ASN1_TIME* nextupd, long nsec, long maxsec);
 
 #endif

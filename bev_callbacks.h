@@ -19,7 +19,11 @@ void ocsp_responder_read_cb(struct bufferevent* bev, void* arg);
 void ocsp_responder_write_cb(struct bufferevent* bev, void* arg);
 void ocsp_responder_event_cb(struct bufferevent* bev, short events, void* arg);
 
+void crl_responder_read_cb(struct bufferevent* bev, void* arg);
+void crl_responder_event_cb(struct bufferevent* bev, short events, void* arg);
+
 int revocation_cb(SSL* ssl, void* arg);
+
 
 
 #endif

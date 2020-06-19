@@ -5,6 +5,7 @@
 #include "log.h"
 #include "revocation.h"
 #include "netlink.h"
+#include "config.h"
 
 
 
@@ -174,8 +175,84 @@ char** retrieve_ocsp_urls(X509* cert, int* num_urls) {
  */
 char** retrieve_crl_urls(X509* cert, int* num_urls) {
 
-	return NULL; //TODO: stub
+	CRL_DIST_POINTS *points;
+	char *urls[10]; /* MAX_URLS */
+	int idx = -1;
+
+	*num_urls = 0;
+
+	points = X509_get_ext_d2i(cert, NID_crl_distribution_points, NULL, &idx);
+
+	if (points == NULL) {
+		log_printf(LOG_DEBUG, "No crl_distribution_points found\n");
+		return NULL;
+	}
+
+	while (points != NULL) {
+		for (int i = 0; i < sk_DIST_POINT_num(points); i++) {
+			log_printf(LOG_DEBUG, "Found a point!\n");
+
+			DIST_POINT *point = sk_DIST_POINT_value(points, i);
+			DIST_POINT_NAME *name = point->distpoint;
+
+			GENERAL_NAMES *names = name->name.fullname;
+			if (names == NULL) {
+				log_printf(LOG_DEBUG, "No general names\n");
+			}
+
+			for (int j = 0; j < sk_GENERAL_NAME_num(names); j++) {
+				GENERAL_NAME *name = sk_GENERAL_NAME_value(names, j);
+
+				log_printf(LOG_DEBUG, "Found a GENERAL_NAME!\n");
+				if (name->type != GEN_URI) {
+					log_printf(LOG_DEBUG, "GENERAL_NAME not URI\n");
+					continue;
+				}
+
+				ASN1_IA5STRING *url_asn1 = name->d.uniformResourceIdentifier;
+
+				unsigned char *url_utf8;
+				int len = ASN1_STRING_to_UTF8(&url_utf8, url_asn1);
+				if (len < 0) {
+					continue;
+				}
+
+				urls[*num_urls] = utf8_to_ascii(url_utf8, len);
+				if (urls[*num_urls] != NULL)
+					(*num_urls)++;
+
+				if (*num_urls >= 10) {
+					log_printf(LOG_DEBUG, "Too many CRL Dist Points\n");
+					return NULL;
+				}
+
+				OPENSSL_free(url_utf8);
+
+			}
+		}
+		points = X509_get_ext_d2i(cert, NID_crl_distribution_points, NULL, &idx);
+	}
+	if (*num_urls == 0) {
+		log_printf(LOG_DEBUG, "No CRL URLs found\n");
+		return NULL;
+	}
+
+	log_printf(LOG_DEBUG, "CRL distribution points: \n");
+	for (int i = 0; i < *num_urls; i++) {
+		printf("%s\n", urls[i]);
+	}
+
+	char **response = malloc((*num_urls) * sizeof(char*));
+	if (response == NULL)
+		return NULL;
+
+	for (int i = 0; i < *num_urls; i++) {
+		response[i] = urls[i];
+	}
+
+	return response;
 }
+
 
 
 /**
@@ -228,6 +305,105 @@ int parse_url(char* url, char** host_out, int* port_out, char** path_out) {
 	return 0;
 }
 
+int crl_parse_url(const char *url, char **host, char **port, char **path, int *ssl) {
+
+	char *p, *buf;
+	char *tmp_host;
+	char *tmp_port = "80";
+
+	if (url ==NULL) {
+		/* TODO: Throw an error here analagous to the one below */
+		/* HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER); */
+		return -1;
+	}
+
+	if (host != NULL)
+		*host = NULL;
+	if (port != NULL)
+		*port = NULL;
+	if (path != NULL)
+		*path = NULL;
+	if (ssl != NULL)
+		*ssl = 0;
+
+	/* dup the buffer since we are going to mess with it */
+	if ((buf = OPENSSL_strdup(url)) == NULL)
+		goto err;
+
+	/* Check for initial colon */
+	p = strchr(buf, ':');
+	if (p == NULL || p - buf > 5 /* strlen("https") */) {
+		p = buf;
+	} else {
+		*(p++) = '\0';
+
+		if (strcmp(buf, "https") == 0) {
+			if (ssl != NULL)
+				*ssl = 1;
+			tmp_port = "443";
+			log_printf(LOG_DEBUG, "https URL detected for CDP");
+		} else if (strcmp(buf, "http") != 0) {
+			goto parse_err;
+		}
+
+		/* Check for double slash */
+		if ((p[0] != '/') || (p[1] != '/'))
+			goto parse_err;
+		p += 2;
+	}
+	tmp_host = p;
+
+	/* Check for trailing part of path */
+	p = strchr(p, '/');
+	if (path != NULL && (*path = OPENSSL_strdup(p == NULL ? "/" : p)) == NULL)
+		goto err;
+	if (p != NULL)
+		*p = '\0'; /* Set start of path to = so hostname[:port] is valid */
+
+	p = tmp_host;
+	if (tmp_host[0] == '[') {
+		/* ipv6 listeral */
+		tmp_host++;
+		p = strchr(tmp_host, ']');
+		if (p == NULL)
+			goto parse_err;
+		*p = '\0';
+		p++;
+	}
+
+	/* Look for optional ':' for port number */
+	if ((p = strchr(p, ':'))) {
+		*p = '\0';
+		tmp_port = p + 1;
+	}
+	if (host != NULL && (*host = OPENSSL_strdup(tmp_host)) == NULL)
+		goto err;
+	if (port != NULL && (*port = OPENSSL_strdup(tmp_port)) == NULL)
+		goto err;
+
+	OPENSSL_free(buf);
+	return 0;
+
+parse_err:
+	/* TODO: Throw an error here analogous to the one below */
+	/* HTTPerr(0, HTTP_R_ERROR_PARSING_URL); */
+
+err:
+	if (path != NULL) {
+		OPENSSL_free(*path);
+		*path = NULL;
+	}
+	if (port != NULL) {
+		OPENSSL_free(*port);
+		*port = NULL;
+	}
+	if (host != NULL) {
+		OPENSSL_free(*host);
+		*host = NULL;
+	}
+	OPENSSL_free(buf);
+	return -1;
+}
 
 
 /*******************************************************************************
@@ -321,6 +497,7 @@ int do_ocsp_response_checks(unsigned char* resp_bytes,
 	return V_OCSP_CERTSTATUS_UNKNOWN;
 }
 
+
 /**
  * Verifies the correctness of the signature and timestamps present in the 
  * given CRL list and checks to see if it contains an entry for the certificate 
@@ -332,9 +509,47 @@ int do_ocsp_response_checks(unsigned char* resp_bytes,
  * 0 if no such status was found; or -1 if the response's correctness could not 
  * be verified.
  */
-int do_crl_response_checks(X509_CRL* response, SSL* ssl) {
+int do_crl_response_checks(X509_CRL* crl, SSL* tls, X509* subject, X509* issuer, int* response) {
 
-	return -1; //TODO: stub
+	const ASN1_TIME * thisupd, * nextupd;
+	X509_REVOKED *revoked;
+	EVP_PKEY *CA_public_key;
+	int ret;
+
+	CA_public_key = X509_get0_pubkey(issuer);
+
+	ret = X509_CRL_verify(crl, CA_public_key);
+	if (ret != 1) {
+		/* signature check failed */
+		log_printf(LOG_ERROR, "CRL signature doesn't match CA\n");
+		*response = X509_V_ERR_CRL_SIGNATURE_FAILURE;
+		return -1;
+	}
+
+	thisupd = X509_CRL_get0_lastUpdate(crl);
+	if (thisupd == NULL) {
+		*response = X509_V_ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD;
+		return -1;
+	}
+	nextupd = X509_CRL_get0_nextUpdate(crl); /* doesn't matter if NULL */
+
+	ret = crl_check_times(thisupd, nextupd, LEEWAY_90_SECS, MAX_OCSP_AGE);
+	if (ret != 1) {
+		log_printf(LOG_ERROR, "CRL dates expired or else malformed\n");
+		*response = X509_V_ERR_CRL_HAS_EXPIRED;
+		/* or X509_V_ERR_CRL_NOT_YET_VALID... */
+		return -1;
+	}
+
+	ret = X509_CRL_get0_by_cert(crl, &revoked, subject);
+	if (ret == 1) {
+		/* ASN1_TIME *time = X509_revoked_get0_revocationDate(revoked); */
+		*response = X509_V_ERR_CERT_REVOKED;
+		return -1;
+	}
+
+	*response = X509_V_OK;
+	return 0;
 }
 
 
@@ -498,3 +713,63 @@ int check_cached_response(socket_ctx* sock_ctx) {
 
 	return V_OCSP_CERTSTATUS_UNKNOWN;
 }
+
+int crl_check_times(const ASN1_TIME* thisupd,
+		const ASN1_TIME* nextupd, long nsec, long maxsec) {
+
+	int ret = 1;
+	time_t t_now, t_tmp;
+	time(&t_now);
+	/* Check thisUpdate is valid and not more than nsec in the future */
+	if (!ASN1_TIME_check(thisupd)) {
+		log_printf(LOG_ERROR, "CRL thisupd invalid\n");
+		/* TODO: print "ERROR in thisupd field--invalid format\n" */
+		ret = 0;
+	} else {
+		t_tmp = t_now + nsec;
+		if (X509_cmp_time(thisupd, &t_tmp) > 0) {
+			log_printf(LOG_ERROR, "CRL not yet valid\n");
+			/* Print error CRL not yet valid */
+			ret = 0;
+		}
+
+		/*
+		 * If maxsec specified check thisUpdate is not more than maxsec
+		 * in the past
+		 */
+		if (maxsec >= 0) {
+			t_tmp = t_now - maxsec;
+			if (X509_cmp_time(thisupd, &t_tmp) < 0) {
+				log_printf(LOG_ERROR, "CRL status too old (our checks\n");
+				/* Print error CRL status too old */
+				ret = 0;
+			}
+		}
+	}
+
+	if (!nextupd)
+		return ret;
+
+	/* Check nextUpdate is valid and not more than nsec in the past */
+	if (!ASN1_TIME_check(nextupd)) {
+		/* TODO: Print error in nextUpdate Field */
+		log_printf(LOG_ERROR, "CRL nextupd malformed\n");
+		ret = 0;
+	} else {
+		t_tmp = t_now - nsec;
+		if (X509_cmp_time(nextupd, &t_tmp) < 0) {
+			/* TODO: Print error CRL expired */
+			log_printf(LOG_ERROR, "CRL expired\n");
+			ret = 0;
+		}
+	}
+
+	/* Also don't allow nextUpdate to precede thisUpdate */
+	if (ASN1_STRING_cmp(nextupd, thisupd) < 0) {
+		/* TODO: Print error nextupd was before thisupd */
+		ret = 0;
+	}
+
+	return ret;
+}
+

@@ -28,6 +28,20 @@
 #define TLS_TRUSTED_CIPHERS               97
 #define TLS_ERROR                        100
 
+/* TLS versions */
+#define TLS_VERSION_MIN			 102
+#define TLS_VERSION_MAX			 103
+#define TLS_VERSION_CONN		 104
+const int TLS_1_2 = 0x0303;
+const int TLS_1_3 = 0x0304;
+char* tls_version_str(int version) {
+
+	if (version == TLS_1_2) 
+		return "TLS 1.2";
+	if (version == TLS_1_3)
+		return "TLS 1.3";
+	return "Unknown version";
+}
 
 /* TCP options */
 #define TCP_UPGRADE_TLS         33

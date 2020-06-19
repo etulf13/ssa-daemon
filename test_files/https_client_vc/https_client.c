@@ -90,6 +90,21 @@ int connect_to_host(char* host, char* service) {
 			continue;
 		}
 
+
+int this = TLS_1_3;
+int that = sizeof(int);
+
+getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, &that);
+printf("%s\n", tls_version_str(this)); 
+this = TLS_1_3;
+int response = setsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, that);
+fprintf(stderr, "%s\n", strerror(errno));
+getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, &that);
+printf("%s\n", tls_version_str(this)); 
+
+
+
+
 		if (connect(sock, addr_ptr->ai_addr, addr_ptr->ai_addrlen) == -1) {
 			perror("connect");
             socklen_t len = ERR_BUF_SIZE;

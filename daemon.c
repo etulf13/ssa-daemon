@@ -608,7 +608,7 @@ void setsockopt_cb(daemon_ctx* ctx, unsigned long id, int level,
 
 	socket_ctx* sock_ctx;
 	int response = 0; /* Default is success */
-
+	int *version_num;
 	sock_ctx = (socket_ctx*)hashmap_get(ctx->sock_map, id);
 	if (sock_ctx == NULL) {
 		netlink_notify_kernel(ctx, id, -EBADF);
@@ -648,6 +648,48 @@ void setsockopt_cb(daemon_ctx* ctx, unsigned long id, int level,
 		response = set_private_key(sock_ctx, value);
 		break;
 
+	case TLS_VERSION_MIN:
+		version_num = (int *) value;
+		if (*version_num != TLS_1_2 && *version_num != TLS_1_3) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MIN not TLS 1.2 or 1.3\n");
+			break;
+		}
+		if (*version_num < get_tls_version(ctx->settings->min_tls_version)) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MIN less than min in config\n");
+			break;
+		}
+		if (*version_num > SSL_CTX_get_max_proto_version(sock_ctx->ssl_ctx)) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MIN greater than current max\n");
+			break;
+		}
+		response = (SSL_CTX_set_min_proto_version(sock_ctx->ssl_ctx, *version_num) - 1);
+		//returns 1 on success and 0 on failure, but we return 0 on success and -1 on failure
+		break;
+
+	case TLS_VERSION_MAX:
+		version_num = (int *) value;
+		if (*version_num != TLS_1_2 && *version_num != TLS_1_3) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MAX not 1.2 or 1.3\n");
+			break;
+		}
+		if (*version_num < get_tls_version(ctx->settings->max_tls_version)) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MAX less than max in config\n");
+			break;
+		}
+		if (*version_num < SSL_CTX_get_min_proto_version(sock_ctx->ssl_ctx)) {
+			response = -EINVAL;
+			log_printf(LOG_DEBUG, "Set TLS_VERSION_MAX less than current min\n");
+			break;
+		}
+		response = (SSL_CTX_set_max_proto_version(sock_ctx->ssl_ctx, *version_num) - 1);
+		//returns 1 on success and 0 on failure, but we return 0 on success and -1 on failure
+		break;
+
 	case TLS_ERROR:
 	case TLS_HOSTNAME:
 	case TLS_TRUSTED_CIPHERS:
@@ -671,9 +713,10 @@ void getsockopt_cb(daemon_ctx* daemon,
 
 	socket_ctx* sock_ctx;
 	int response = 0;
-	char* data = NULL;
+	void* data = NULL;
 	unsigned int len = 0;
 	int need_free = 0;
+	int version;
 
 	sock_ctx = (socket_ctx*)hashmap_get(daemon->sock_map, id);
 	if (sock_ctx == NULL) {
@@ -735,6 +778,24 @@ void getsockopt_cb(daemon_ctx* daemon,
 		response = get_enabled_ciphers(sock_ctx, &data, &len);
 		if (response == 0)
 			need_free = 1;
+		break;
+
+	case TLS_VERSION_MIN:
+		version = SSL_CTX_get_min_proto_version(sock_ctx->ssl_ctx);
+		data = &version;
+		len = sizeof(int);
+		break;
+
+	case TLS_VERSION_MAX:
+		version = SSL_CTX_get_max_proto_version(sock_ctx->ssl_ctx);
+		data = &version;
+		len = sizeof(int);
+		break;
+
+	case TLS_VERSION_CONN:
+		version = SSL_version(sock_ctx->ssl);
+		data = &version;
+		len = sizeof(int);
 		break;
 
 	case TLS_TRUSTED_PEER_CERTIFICATES:

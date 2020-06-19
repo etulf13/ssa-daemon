@@ -34,10 +34,10 @@ int load_ciphersuites(SSL_CTX* ctx, char** list, int num);
 
 
 /* setsockopt */
-int get_peer_certificate(socket_ctx* conn, char** data, unsigned int* len);
-int get_peer_identity(socket_ctx* conn_ctx, char** data, unsigned int* len);
-int get_hostname(socket_ctx* conn_ctx, char** data, unsigned int* len);
-int get_enabled_ciphers(socket_ctx* conn, char** data, unsigned int* len);
+int get_peer_certificate(socket_ctx* conn, void** data, unsigned int* len);
+int get_peer_identity(socket_ctx* conn_ctx, void** data, unsigned int* len);
+int get_hostname(socket_ctx* conn_ctx, void** data, unsigned int* len);
+int get_enabled_ciphers(socket_ctx* conn, void** data, unsigned int* len);
 
 /* setsockopt */
 int set_connection_client(socket_ctx* conn, daemon_ctx* daemon);

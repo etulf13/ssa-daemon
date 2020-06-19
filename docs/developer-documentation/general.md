@@ -108,14 +108,14 @@ _Blue numbered circles reference explanations above_
 
 	<img src="diagrams/step8.png" width="300">
 	
-9. Finally, the `connect_cb` function calls `bufferevent_socket_connect` to asynchronously connect the internet-facing socket with the destination address and perform the TLS handshake. `connect_cb` then returns. Once the daemon's internet-facing socket successfully connects to the destination server, an event is detected on its bufferevent (`secure.bev`), causing `client_bev_event_cb` to be called. This function notifies the kernel that the connection is established (`netlink_handshake_notify_kernel`).
-
-Note that there may be some modifications made here to accomodate revocation checking--it will be added to documentation eventually.
+9. Finally, the `connect_cb` function calls `bufferevent_socket_connect` to asynchronously connect the internet-facing socket with the destination address and perform the TLS handshake. `connect_cb` then returns. Once the daemon's internet-facing socket successfully connects to the destination server, an event is detected on its bufferevent (`secure.bev`), causing `client_bev_event_cb` to be called. This function calls `handle_client_event_connected`, which notifies the kernel that the connection is established (`netlink_handshake_notify_kernel`).
 
 	<img src="diagrams/step9.png" width="400">
 
 	_A secure (i.e. encrypted) connection is now established between the daemon's socket and the remote server. However, there is currently no connection between the client and the daemon._
-	
+
+Note that there may be some modifications made here to accomodate revocation checking--it will be added to documentation eventually.
+
 10. When the module receives the notification, it calls `report_handshake_finished`, which causes the `tls_inet_connect` function to stop waiting. `tls_inet_connect` then calls `ref_inet_stream_ops.connect` to connect the client's socket to the daemon.
 	
 11. The daemon's listening socket then accepts the connection from the client and creates a socket for that connection. Back in the module, once the connection is established, `ref_inet_stream_ops.connect` returns, after which `tls_inet_connect` returns, causing the client's call to `connect` to return. 
@@ -124,11 +124,17 @@ Note that there may be some modifications made here to accomodate revocation che
 
 	_The client's socket is now connected to the daemon's client-facing socket_
 
-12. Meanwhile, in the daemon, the incoming connection triggers a call to the callback function registered with the listening socket's bufferevent (`accept_cb`). `accept_cb` associates the newly created socket with the `plain.bev` bufferevent created in `connect_cb` (via `associate_fd`).
+12. Meanwhile, in the daemon, the incoming connection triggers a call to the callback function registered with the listening socket's bufferevent (`accept_cb`). `accept_cb` associates the newly created socket with the `plain.bev` bufferevent created handin `connect_cb` (via `associate_fd`).
 
 	<img src="diagrams/step12.png" width="400">
 
 	_A plain-text connection is now established between the client and the daemon, which is in turn securely connected to the remote server. It is important to note, however, that from the client's perspective, it is now securely connected directly to the remote server._
+
+#### Sequence diagram
+
+<img src="diagrams/sequence_connect.png" width="1000"> 
+
+_Blue numbered circles reference explanations above_
 
 ### Part D: Sending and Receiving Data	
 

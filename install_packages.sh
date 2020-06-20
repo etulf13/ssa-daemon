@@ -17,6 +17,7 @@ if [[ "${DISTRO}" == 'Fedora' ]]; then
 						  libnotify-devel \
 						  openssl-devel \
 						  qrencode \
+						  libyaml-dev \
 						  
 
 	echo 'Installed'
@@ -37,6 +38,7 @@ if [[ "${DISTRO}" == '"Ubuntu"' ]]; then
 						  linux-headers-$(uname -r | sed 's/[0-9\.\-]*//') \
 						  openssl \
 						  qrencode \
+						  libyaml-dev \
 
 	echo 'Installed'
 fi

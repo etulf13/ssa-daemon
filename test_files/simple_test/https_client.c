@@ -11,23 +11,42 @@
 int connect_to_host(char* host, char* service);
 void print_identity(int fd);
 
+#define ERR_BUF_SIZE 256
+#define RESPONSE_SIZE 5000
+
 int main(int argc, char* argv[]) {
 	int sock_fd;
 	char http_request[2048];
-	char http_response[2048];
+	char http_response[RESPONSE_SIZE];
 
 	if (argc < 3) {
-		printf("USAGE: %s <host name> <port>\n", argv[0]);
-		return 0;
+	        //printf("USAGE: %s <host name> <port>\n", argv[0]);
+		//return 0;
+		char host[] = "www.google.com";
+		char port[] = "443";
+		
+		sock_fd = connect_to_host(host, port);
+		sprintf(http_request,"GET / HTTP/1.1\r\nhost: %s\r\n\r\n", host);
+	} else {
+	       sock_fd = connect_to_host(argv[1], argv[2]);
+	       sprintf(http_request,"GET / HTTP/1.1\r\nhost: %s\r\n\r\n", argv[1]);
 	}
 
-	sock_fd = connect_to_host(argv[1], argv[2]);
-	sprintf(http_request,"GET / HTTP/1.1\r\nhost: %s\r\n\r\n", argv[1]);
+	
 
 	memset(http_response, 0, 2048);
 	send(sock_fd, http_request, strlen(http_request), 0);
-	recv(sock_fd, http_response, 750, 0);
-	printf("Received:\n%s\n", http_response);
+    int total_recvd = 0;
+	
+    int num_recvd = recv(sock_fd, http_response, RESPONSE_SIZE, 0);
+    if (num_recvd < 0) {
+        perror("recv failure");
+        exit(1);
+    } else if (num_recvd == 0) {
+        printf("NOTE: Client received EOF from server.\n");
+    } else {
+        printf("Received:\n%s\n", http_response);
+    }
 	close(sock_fd);
 	return 0;
 }
@@ -62,6 +81,12 @@ int connect_to_host(char* host, char* service) {
 
 		if (connect(sock, addr_ptr->ai_addr, addr_ptr->ai_addrlen) == -1) {
 			perror("connect");
+            socklen_t len = ERR_BUF_SIZE;
+            char buf[ERR_BUF_SIZE] = {0};
+            int ret = getsockopt(sock, IPPROTO_TLS, TLS_ERROR, &buf, &len);
+            if (ret < 0)
+                perror("getsockopt on error failed");
+            printf("%s\n", buf);
 			close(sock);
 			continue;
 		}
@@ -83,11 +108,13 @@ void print_identity(int fd) {
 	if (getsockopt(fd, IPPROTO_TLS, TLS_PEER_CERTIFICATE_CHAIN, data, &data_len) == -1) {
 		perror("TLS_PEER_CERTIFICATE_CHAIN");
 	}
-	printf("Peer certificate:\n%s\n", data);
+  	printf("Peer certificate:\n%s\n", data);
+    
+	data_len = sizeof(data);
 	if (getsockopt(fd, IPPROTO_TLS, TLS_PEER_IDENTITY, data, &data_len) == -1) {
 		perror("TLS_PEER_IDENTITY");
 	}
 	printf("Peer identity:\n%s\n", data);
-	return;
+	
 }
 

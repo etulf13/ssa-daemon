@@ -1,8 +1,9 @@
 CC = gcc
 CXXFLAGS=-Wall -Wno-deprecated-declarations
-CXX_DEBUG_FLAGS=-g
+CXX_DEBUG_FLAGS=-g -ggdb3
 CXX_RELEASE_FLAGS=-O3 -DNO_LOG
- 
+
+
 EXEC = ssa_daemon
 SOURCES = $(wildcard *.c)
 OBJECTS = $(SOURCES:.c=.o)
@@ -11,13 +12,13 @@ NEW_INCLUDES = \
 	`pkg-config --cflags libnl-3.0` \
 	-Iopenssl/include \
 	-Ilibevent/include
-LIBS = 	-lpthread \
+LIBS = 	-lpthread -lyaml \
 	`pkg-config --libs \
 		libconfig \
 		libevent_openssl \
 		libnl-genl-3.0 \
-	       	avahi-client \
-	       	openssl \
+	    avahi-client \
+	    openssl \
 		`
 LIBS_EX = \
 	-Llibevent/lib \
@@ -32,10 +33,10 @@ LIBS_EX = \
 		libevent_openssl \
 		libnl-genl-3.0 \
 		libnotify \
-	       	avahi-client \
-	       	openssl \
-		`
-  
+	   	avahi-client \
+	  	openssl \
+	`
+
 INCLUDES= \
 	`pkg-config --cflags libnotify`
 
@@ -60,15 +61,14 @@ hostname-support-release: sharedobject
 hostname-support-release: preload
 hostname-support-release: release
 
-
 # Main target
 $(EXEC): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $(EXEC) $(LIBS)
- 
+
 # To obtain object files
 %.o: %.c
 	$(CC) -c $(CXXFLAGS) $< $(INCLUDES) -o $@
- 
+
 # To remove generated files
 clean:
 	rm -f $(EXEC) $(OBJECTS)
@@ -76,7 +76,7 @@ clean:
 sharedobject:
 	$(MAKE) -C $(PRELOAD_PATH)
 
-preload: 
+preload:
 ifeq (0, $(shell grep -c addons.so $(BASHRC)))
 	@test -z $(LD_PRELOAD) && EMPTY_PRELOAD=1 || EMPTY_PRELOAD=0
 ifneq	(0, $(shell grep -c LD_PRELOAD $(BASHRC)))
@@ -86,7 +86,7 @@ ifneq		(1,$(EMPTY_PRELOAD))
 			# LD_PRELOAD in .bashrc only
 			@sed -i -e "s|^\(export LD_PRELOAD=\)\([.:\/a-zA-z0-9 ]*\)|\0\n\1$(PRELOAD_PATH)/addons.so:\2|g" $(BASHRC)
 else
-			# LD_PRELOAD is in bash & .bashrc			
+			# LD_PRELOAD is in bash & .bashrc
 ifeq 			(1, $(shell grep -c "LD_PRELOAD=$(LD_PRELOAD)" $(BASHRC)))
 				# LD_PRELOAD in bash matches .bashrc
 				@echo "amending ~/.bashrc to include .so in LD_PRELOAD."
@@ -104,7 +104,7 @@ ifneq		(1,$(EMPTY_PRELOAD))
 			@echo "LD_PRELOAD was absent. Adding .so to LD_PRELOAD in ~/.bashrc"
 			@sed -i -e "\$$aexport LD_PRELOAD=$(PRELOAD_PATH)/addons.so" $(BASHRC)
 else
-			# LD_PRELOAD is in bash only			
+			# LD_PRELOAD is in bash only
 			@echo "LD_PRELOAD is set in bash. Adding .so and saving to ~/.bashrc"
 			@sed -i -e "\$$aexport LD_PRELOAD=$(PRELOAD_PATH)/addons.so:$(LD_PRELOAD)" $(BASHRC)
 endif		#  $(EMPTY_PRELOAD)
@@ -117,4 +117,3 @@ ifneq (0, $(shell grep -c addons.so $(BASHRC)))
 	@echo "removing addons.so from LD_PRELOAD"
 	@sed -i -e ':a;N;$$!ba;s|\nexport LD_PRELOAD=$(PRELOAD_PATH)/addons\.so\(:.*\)*||g' $(BASHRC)
 endif
-

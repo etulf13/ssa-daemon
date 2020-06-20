@@ -42,9 +42,8 @@ int hash(hsmap_t* map, char* key) {
 	int i;
 	int hash_val = 0;
 	
-	for (i = 0; i < strlen(key); ++i) {
+	for (i = 0; i < strlen(key); ++i)
 		hash_val += key[i];
-	}
 
 	return hash_val % map->num_buckets;
 }
@@ -75,9 +74,10 @@ void str_hashmap_deep_free(hsmap_t* map, void (*free_func)(void*)) {
 		cur = map->buckets[i];
 		while (cur != NULL) {
 			tmp = cur->next;
-			if (free_func != NULL) {
+			if (free_func != NULL)
 				free_func(cur->value);
-			}
+			
+            free(cur->key);
 			free(cur);
 			cur = tmp;
 		}
@@ -149,6 +149,7 @@ int str_hashmap_del(hsmap_t* map, char* key) {
 		if (STR_MATCH(cur->key,key)) {
 			tmp = cur->next;
 			cur->next = cur->next->next;
+            free(tmp->key);
 			free(tmp);
 			map->item_count--;
 			return 0;

@@ -1,37 +1,15 @@
-#ifndef CONFIG_H
-#define CONFIG_H
-#include <stdio.h>
-#include <stdlib.h>
-#include <openssl/ssl.h>
-#include "hashmap_str.h"
-enum validation { Normal, TrustBase };
-#define SSA_EXT_SNI    0x0001
-#define SSA_EXT_ALPN   0x0002
-#define SSA_EXT_TICKET 0x0004
+#ifndef SSA_CONFIG_H
+#define SSA_CONFIG_H
 
-typedef struct {
-    char* profile;
-    int min_version;
-    int max_version;
-    long options; //for version stuff too
-    char* cipher_list;
-    enum validation validate;
-    char* trust_store;
-    int custom_validation;
-    long cache_timeout;
-    char* cache_path;
-    long extensions; //bitmask
-    char* randseed_path;
-    int randseed_size;
+#include "daemon_structs.h"
 
-} ssa_config_t;
 
-extern char DEFAULT_CONF[];
-extern hsmap_t* global_config;
-extern size_t global_config_size;
+#define DEFAULT_CONFIG_PATH "test_files/config.yml"
 
-size_t parse_config(char* filename);
-void free_config();
-ssa_config_t* get_app_config(char* app_path);
+
+global_config* parse_config(char* file_path);
+void global_settings_free(global_config* settings);
+
+
 
 #endif

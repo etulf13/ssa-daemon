@@ -24,48 +24,28 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef DAEMON_H
-#define DAEMON_H
+#ifndef SSA_DAEMON_H
+#define SSA_DAEMON_H
 
-#include <netinet/in.h>
+#include <sys/socket.h>
 
-#include <event2/event.h>
-#include <event2/util.h>
+#include "daemon_structs.h"
 
-#include <openssl/ssl.h>
-#include <openssl/x509.h>
-#include <openssl/evp.h>
-
-#include "hashmap.h"
-#include "queue.h"
-
-
-#define MAX_HOSTNAME		255
-
-typedef struct tls_daemon_ctx {
-	struct event_base* ev_base;
-	struct nl_sock* netlink_sock;
-	int netlink_family;
-	int port; /* Port to use for both listening and netlink */
-	hmap_t* sock_map;
-	hmap_t* sock_map_port;
-} tls_daemon_ctx_t;
-
-int server_create(int port);
-void socket_cb(tls_daemon_ctx_t* ctx, unsigned long id, char* comm);
-void setsockopt_cb(tls_daemon_ctx_t* ctx, unsigned long id, int level, 
+int run_daemon(int port, char* config_path);
+void socket_cb(daemon_ctx* ctx, unsigned long id, char* comm);
+void setsockopt_cb(daemon_ctx* ctx, unsigned long id, int level, 
 		int option, void* value, socklen_t len);
-void getsockopt_cb(tls_daemon_ctx_t* ctx, unsigned long id, int level, int option);
-void bind_cb(tls_daemon_ctx_t* ctx, unsigned long id, struct sockaddr* int_addr, 
+void getsockopt_cb(daemon_ctx* ctx, unsigned long id, int level, int option);
+void bind_cb(daemon_ctx* ctx, unsigned long id, struct sockaddr* int_addr, 
 	int int_addrlen, struct sockaddr* ext_addr, int ext_addrlen);
-void connect_cb(tls_daemon_ctx_t* ctx, unsigned long id, struct sockaddr* int_addr, 
+void connect_cb(daemon_ctx* ctx, unsigned long id, struct sockaddr* int_addr, 
 	int int_addrlen, struct sockaddr* rem_addr, int rem_addrlen, int blocking);
-void listen_cb(tls_daemon_ctx_t* ctx, unsigned long id, struct sockaddr* int_addr,
+void listen_cb(daemon_ctx* ctx, unsigned long id, struct sockaddr* int_addr,
 	int int_addrlen, struct sockaddr* ext_addr, int ext_addrlen);
-void associate_cb(tls_daemon_ctx_t* ctx, unsigned long id, struct sockaddr* int_addr,
+void associate_cb(daemon_ctx* ctx, unsigned long id, struct sockaddr* int_addr,
 	       	int int_addrlen);
-void close_cb(tls_daemon_ctx_t* ctx, unsigned long id);
-void upgrade_cb(tls_daemon_ctx_t* ctx, unsigned long id, struct sockaddr* int_addr, 
+void close_cb(daemon_ctx* ctx, unsigned long id);
+void upgrade_cb(daemon_ctx* ctx, unsigned long id, struct sockaddr* int_addr, 
 	int int_addrlen);
 
 #endif

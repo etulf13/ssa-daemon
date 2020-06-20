@@ -3,7 +3,7 @@
  * Copyright (C) 2017-2018, Mark O'Neill <mark@markoneill.name>
  * All rights reserved.
  * https://owntrust.org
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -24,46 +24,28 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include <errno.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdio.h>
+
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
-#include <wait.h>
+#include <sys/types.h>
 
-#include "config.h"
-#include "daemon.h"
 #include "log.h"
-#include "nsd.h"
-#include "self_sign.h"
+#include "daemon.h"
 
-void sig_handler(int signum);
-	
-pid_t* workers;
-int worker_count;
-int is_parent;
+#define PORT 8443
 
-typedef struct daemon_param {
-	int port;
-	EVP_PKEY* pub_key;
-} daemon_param_t;
-
+/* NOTE: This is not the main function that spins up multiple daemons and all
+ * the other features that Mark O'Neil implemented. That is found in
+ * main_original.c. This function is merely to allow easy use of gdb and other
+ * debugging tools. */
 int main(int argc, char* argv[]) {
-	int i;
-	pid_t pid;
-	struct sigaction sigact;
-	int status;
-	int ret;
-	int starting_port = 8443;
-#ifndef NO_LOG
-	long cpus_conf;
-	long cpus_on;
-#endif
 
-	/* Init logger */
-	if (log_init(NULL, LOG_DEBUG)) {
+	char* config_path = NULL;
+
+	if (argc > 1)
+		config_path = argv[1];
+
+    if (log_init(NULL, LOG_DEBUG)) {
 		fprintf(stderr, "Failed to initialize log\n");
 		exit(EXIT_FAILURE);
 	}
@@ -73,84 +55,8 @@ int main(int argc, char* argv[]) {
 		exit(EXIT_FAILURE);
 	}
 
-#ifndef NO_LOG
-	cpus_on = sysconf(_SC_NPROCESSORS_ONLN);
-	cpus_conf = sysconf(_SC_NPROCESSORS_CONF);
-	log_printf(LOG_INFO, "Detected %ld/%ld active CPUs\n", cpus_on, cpus_conf);
-#endif
+    int ret = run_daemon(PORT, config_path);
 
-
-	memset(&sigact, 0, sizeof(sigact));
-	sigact.sa_handler = sig_handler;
-	sigaction(SIGINT, &sigact, NULL);
-
-	if (parse_config("ssa.cfg") == -1) {
-	    log_printf(LOG_ERROR, "Failed to parse config file\n");
-	    exit(EXIT_FAILURE);
-    }
-	
-	worker_count = 1;
-
-	workers = malloc(sizeof(pid_t) * worker_count);
-	if (workers == NULL) {
-		log_printf(LOG_ERROR, "Failed to malloc space for workers\n");
-		exit(EXIT_FAILURE);
-	}
-	for (i = 0; i < worker_count; i++) {
-		pid = fork();
-		if (pid == -1) {
-			log_printf(LOG_ERROR, "%s", strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		if (pid == 0) {
-			server_create(starting_port + i);
-			free(workers);
-			return 0;
-		}
-		else {
-			workers[i] = pid;
-			is_parent = 1;
-		}
-	}
-
-	while ((ret = wait(&status)) > 0) {
-		if (ret == -1) {
-			log_printf(LOG_ERROR, "Failed in waitpid %s\n", strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-		if (WIFEXITED(status)) {
-			log_printf(LOG_INFO, "worker exited, status %d\n", WEXITSTATUS(status));
-		}
-		else if (WIFSIGNALED(status)) {
-				log_printf(LOG_INFO, "worker killed by signal %d\n", WTERMSIG(status));
-		}
-		else if (WIFSTOPPED(status)) {
-			log_printf(LOG_INFO, "worker stopped by signal %d\n", WSTOPSIG(status));
-		}
-		else if (WIFCONTINUED(status)) {
-			log_printf(LOG_INFO, "worker continued\n");
-		}
-	}
-
-
-	log_close();
-	free_config();
-	free(workers);
-	return 0;
-}
-
-void sig_handler(int signum) {
-	int i;
-	if (signum == SIGINT) {
-		if (is_parent == 1) {
-			for (i = 0; i < worker_count; i++) {
-				kill(workers[i], SIGINT);
-			}
-		}
-		else {
-			free(workers);
-			_exit(0);
-		}
-	}
-	return;
+    log_close();
+    return ret;
 }

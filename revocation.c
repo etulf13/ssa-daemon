@@ -3,9 +3,9 @@
 #include <event2/bufferevent.h>
 
 #include "log.h"
-#include "revocation.h"
 #include "netlink.h"
 #include "config.h"
+#include "revocation.h"
 
 
 
@@ -15,7 +15,7 @@ void set_revocation_state(socket_ctx* sock_ctx, enum revocation_state state) {
     int id = sock_ctx->id;
     int response;
 
-    sock_ctx->revocation.state = state;
+    sock_ctx->rev_ctx.state = state;
 
     if (sock_ctx->state == SOCKET_FINISHING_CONN) {
         switch (state) {
@@ -480,9 +480,8 @@ int do_ocsp_response_checks(unsigned char* resp_bytes,
 	if (status == V_OCSP_CERTSTATUS_UNKNOWN)
 		goto err;
 
-	ret = add_to_ocsp_cache(id, basicresp, sock_ctx->daemon);
-	if (ret != 0)
-		goto err;
+    /* even if a user doesn't check cached responses, we shoul add them */
+	add_to_ocsp_cache(id, basicresp, sock_ctx->daemon);
 
 	OCSP_CERTID_free(id);
 
@@ -650,7 +649,7 @@ char* get_ocsp_id_string(OCSP_CERTID* certid) {
 int add_to_ocsp_cache(OCSP_CERTID* id, 
 		OCSP_BASICRESP* response, daemon_ctx* daemon) {
 
-	hmap_t* rev_cache = daemon->revocation_cache;
+	hsmap_t* rev_cache = daemon->revocation_cache;
 	char* id_string = NULL;
 	int ret;
 
@@ -658,9 +657,10 @@ int add_to_ocsp_cache(OCSP_CERTID* id,
 	if (id_string == NULL)
 		return -1;
 	
-	ret = hashmap_add_str(rev_cache, id_string, (void*)response);
+	ret = str_hashmap_add(rev_cache, id_string, (void*)response);
 	if (ret != 0) {
-		log_printf(LOG_ERROR, "Cache entry already exists\n");
+		log_printf(LOG_INFO, "Cache entry already exists\n");
+        OCSP_BASICRESP_free(response);
 		free(id_string);
 		return -1;
 	}
@@ -671,7 +671,7 @@ int add_to_ocsp_cache(OCSP_CERTID* id,
 
 int check_cached_response(socket_ctx* sock_ctx) {
 
-	hmap_t* rev_cache = sock_ctx->daemon->revocation_cache;
+	hsmap_t* rev_cache = sock_ctx->daemon->revocation_cache;
 	OCSP_BASICRESP* cached_resp = NULL;
 	STACK_OF(X509)* chain = NULL;
 	X509_STORE* store = NULL;
@@ -692,13 +692,13 @@ int check_cached_response(socket_ctx* sock_ctx) {
 	if (id_string == NULL)
 		goto err;
 
-	cached_resp = (OCSP_BASICRESP*) hashmap_get_str(rev_cache, id_string);
+	cached_resp = (OCSP_BASICRESP*) str_hashmap_get(rev_cache, id_string);
 	if (cached_resp == NULL)
 		goto err;
 
 	ret = verify_ocsp_basicresp(cached_resp, id, chain, store);
 	if (ret == V_OCSP_CERTSTATUS_UNKNOWN) {
-		hashmap_del_str(rev_cache, id_string);
+		str_hashmap_del(rev_cache, id_string);
 		goto err;
 	}
 

@@ -24,8 +24,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef HASHMAP_H
-#define HASHMAP_H
+#ifndef SSA_HASHMAP_H
+#define SSA_HASHMAP_H
 
 typedef struct hmap {
 	struct hnode** buckets;
@@ -40,12 +40,5 @@ int hashmap_add(hmap_t* map, unsigned long key, void* value);
 int hashmap_del(hmap_t* map, unsigned long key);
 void* hashmap_get(hmap_t* map, unsigned long key);
 void hashmap_print(hmap_t* map);
-
-int hashmap_add_str(hmap_t* map, char* key, void* value);
-int hashmap_del_str(hmap_t* map, char* key);
-void* hashmap_get_str(hmap_t* map, char* key);
-void hashmap_print_str(hmap_t* map);
-void hashmap_deep_str_free(hmap_t* map, void (*free_func)(void*));
-
 
 #endif

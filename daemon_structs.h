@@ -1,11 +1,11 @@
-#ifndef DAEMON_STRUCTS_H
-#define DAEMON_STRUCTS_H
+#ifndef SSA_DAEMON_STRUCTS_H
+#define SSA_DAEMON_STRUCTS_H
 
 #include <event2/util.h>
-
 #include <openssl/ssl.h>
 
 #include "hashmap.h"
+#include "hashmap_str.h"
 
 #define ID_NOT_SET 0 /* for connection and sock_context id */
 #define MAX_ERR_STRING 128
@@ -25,11 +25,27 @@
 #define NO_OCSP_STAPLED_CHECKS   (1 << 1)
 #define NO_OCSP_RESPONDER_CHECKS (1 << 2)
 #define NO_CRL_RESPONDER_CHECKS  (1 << 3)
+#define NO_CACHED_CHECKS        (1 << 4)
 
-#define DO_REVOCATION_CHECKS(checks) !(checks & NO_REVOCATION_CHECKS)
-#define DO_OCSP_STAPLED_CHECKS(checks) !(checks & NO_OCSP_STAPLED_CHECKS)
-#define DO_OCSP_RESPONDER_CHECKS(checks) !(checks & NO_OCSP_RESPONDER_CHECKS)
-#define DO_CRL_RESPONDER_CHECKS(checks) !(checks & NO_CRL_RESPONDER_CHECKS)
+#define turn_off_revocation_checks(checks) (checks |= NO_REVOCATION_CHECKS)
+#define turn_on_revocation_checks(checks) (checks &= ~NO_REVOCATION_CHECKS)
+#define has_revocation_checks(checks) !(checks & NO_REVOCATION_CHECKS)
+
+#define turn_off_stapled_checks(checks) (checks |= NO_OCSP_STAPLED_CHECKS)
+#define turn_on_stapled_checks(checks) (checks &= ~NO_OCSP_STAPLED_CHECKS)
+#define has_stapled_checks(checks) !(checks & NO_OCSP_STAPLED_CHECKS)
+
+#define turn_off_ocsp_checks(checks) (checks |= NO_OCSP_RESPONDER_CHECKS)
+#define turn_on_ocsp_checks(checks) (checks &= ~NO_OCSP_RESPONDER_CHECKS)
+#define has_ocsp_checks(checks) !(checks & NO_OCSP_RESPONDER_CHECKS)
+
+#define turn_off_crl_checks(checks) (checks |= NO_CRL_RESPONDER_CHECKS)
+#define turn_on_crl_checks(checks) (checks &= ~NO_CRL_RESPONDER_CHECKS)
+#define has_crl_checks(checks) !(checks & NO_CRL_RESPONDER_CHECKS)
+
+#define turn_off_cached_checks(checks) (checks |= NO_CACHED_CHECKS)
+#define turn_on_cached_checks(checks) (checks &= ~NO_CACHED_CHECKS)
+#define has_cached_checks(checks) !(checks & NO_CACHED_CHECKS)
 
 struct channel_st;
 struct daemon_ctx_st;
@@ -83,7 +99,7 @@ struct daemon_ctx_st {
 	hmap_t* sock_map_port;
     global_config* settings;
 
-	hmap_t* revocation_cache;
+	hsmap_t* revocation_cache;
 };
 
 struct global_config_st {
@@ -152,19 +168,21 @@ struct responder_ctx_st {
  
 
 struct socket_ctx_st {
+
+	daemon_ctx* daemon;
+	unsigned long id;
+
     enum socket_state state;
+
+    SSL_CTX* ssl_ctx;
+	SSL* ssl;
+	evutil_socket_t sockfd;
 
 	channel plain;
 	channel secure;
-	SSL* ssl;
-	struct sockaddr* addr; /* TODO: Used only for server-side connections?? */
-	int addrlen;
+	struct evconnlistener* listener;
 
-	unsigned long id;
-	evutil_socket_t fd;
-    SSL_CTX* ssl_ctx;
-
-	revocation_ctx revocation;
+	revocation_ctx rev_ctx;
 
 	struct sockaddr int_addr; /** Internal address--the program using SSA */
 	int int_addrlen;
@@ -176,12 +194,13 @@ struct socket_ctx_st {
 		int ext_addrlen;
 		int rem_addrlen;
 	};
+    int accept_port;
 
-	struct evconnlistener* listener;
 
 	char rem_hostname[MAX_HOSTNAME+1];
+
     char err_string[MAX_ERR_STRING+1];
-	daemon_ctx* daemon;
+    unsigned int handshake_err_code;
 };
 
 
@@ -201,16 +220,6 @@ void responder_cleanup(responder_ctx* resp);
 
 int check_socket_state(socket_ctx* sock_ctx, int num, ...);
 
-int has_err_string(socket_ctx* sock_ctx);
-void set_err_string(socket_ctx* sock_ctx, char* string, ...);
-void set_verification_err_string(socket_ctx* sock_ctx, unsigned long ssl_err);
-void set_badfd_err_string(socket_ctx* sock_ctx);
-void set_wrong_state_err_string(socket_ctx* sock_ctx);
-void clear_err_string(socket_ctx* sock_ctx);
-
-int ssl_malloc_err(socket_ctx* sock_ctx);
-
-int associate_fd(socket_ctx* sock_ctx, evutil_socket_t ifd);
 int get_port(struct sockaddr* addr);
 
 

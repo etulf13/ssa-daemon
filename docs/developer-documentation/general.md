@@ -23,6 +23,7 @@ This document contains information relevant to the SSA as a whole. For informati
     - [Sequence diagram](#sequence-diagram)
   - [Part B: Setting the hostname](#part-b-setting-the-hostname)
   - [Part C: Connecting to the endhost](#part-c-connecting-to-the-endhost)
+    - [Sequence diagram](#sequence-diagram-1)
   - [Part D: Sending and Receiving Data](#part-d-sending-and-receiving-data)
   - [Part E: Closing the socket](#part-e-closing-the-socket)
 
@@ -77,7 +78,7 @@ The following explanation walks through what happens in the SSA as each of these
 	
 	_At this point, a socket has been allocated in the kernel for the client, but the client does not have a file descriptor for it, as its call to `socket` has not yet returned._
 
-2. When the daemon receives the notification, it creates a regular socket (`socket_cb`), configures OpenSSL to secure default settings (`client_SSL_new`), and notifies the kernel (`netlink_notify_kernel`).
+2. When the daemon receives the notification, it calls the function `socket_cb()`, which creates a regular socket, asssigns it to a context that holds it and other important data structures (`socket_context_new`), configures OpenSSL to secure default settings (`SSL_CTX_create`), and notifies the kernel (`netlink_notify_kernel`).
 
 	<img src="diagrams/step2.png" width="300">
 
@@ -104,16 +105,18 @@ _Blue numbered circles reference explanations above_
 
 7. The client call to `connect` is intercepted by the kernel module, which calls `tls_inet_connect`. This function binds the source port (if it hasn't been bound already), notifies the daemon (`send_connect_notification`), and waits for a response from the daemon.
 	
-8. When the daemon receives the notification, it calls `connect_cb`, which configures OpenSSL to use the hostname passed in for validation and creates 2 bufferevents (`client_connection_setup`). The first bufferevent (`plain.bev`, created with `bufferevent_socket_new`) is for monitoring the client-facing socket (which as of yet does not exist; the daemon waits to create it until the client's socket connects to it). The second bufferevent (`secure.bev`, created with `bufferevent_openssl_socket_new`) is for monitoring the internet-facing socket. This is an Openssl bufferevent, which means Libevent will perform the TLS handshake and encryption according to the TLS configurations passed to it. The socket created by the daemon in `socket_cb` is registered with `secure.bev`. 
+8. When the daemon receives the notification, it calls `connect_cb`, which configures OpenSSL to use the hostname passed in for validation (`prepare_SSL_connection`) and creates 2 bufferevents (`prepare_bufferevents`). The first bufferevent (`plain.bev`, created with `bufferevent_socket_new`) is for monitoring the client-facing socket (which as of yet does not exist; the daemon waits to create it until the client's socket connects to it). The second bufferevent (`secure.bev`, created with `bufferevent_openssl_socket_new`) is for monitoring the internet-facing socket. This is an OpenSSL bufferevent, which means Libevent will perform the TLS handshake and encryption according to the TLS configurations passed to it. The socket created by the daemon in `socket_cb` is registered with `secure.bev`. 
 
 	<img src="diagrams/step8.png" width="300">
 	
-9. Finally, the `connect_cb` function calls `bufferevent_socket_connect` to asynchronously connect the internet-facing socket with the destination address and perform the TLS handshake. `connect_cb` then returns. Once the daemon's internet-facing socket successfully connects to the destination server, an event is detected on its bufferevent (`secure.bev`), causing `client_bev_event_cb` to be called. This function notifies the kernel that the connection is established (`netlink_handshake_notify_kernel`).
+9. Finally, the `connect_cb` function calls `bufferevent_socket_connect` to asynchronously connect the internet-facing socket with the destination address and perform the TLS handshake. `connect_cb` then returns. Once the daemon's internet-facing socket successfully connects to the destination server, an event is detected on its bufferevent (`secure.bev`), causing `client_bev_event_cb` to be called. This function calls `handle_client_event_connected`, which notifies the kernel that the connection is established (`netlink_handshake_notify_kernel`).
 
 	<img src="diagrams/step9.png" width="400">
 
 	_A secure (i.e. encrypted) connection is now established between the daemon's socket and the remote server. However, there is currently no connection between the client and the daemon._
-	
+
+Note that there may be some modifications made here to accomodate revocation checking--it will be added to documentation eventually.
+
 10. When the module receives the notification, it calls `report_handshake_finished`, which causes the `tls_inet_connect` function to stop waiting. `tls_inet_connect` then calls `ref_inet_stream_ops.connect` to connect the client's socket to the daemon.
 	
 11. The daemon's listening socket then accepts the connection from the client and creates a socket for that connection. Back in the module, once the connection is established, `ref_inet_stream_ops.connect` returns, after which `tls_inet_connect` returns, causing the client's call to `connect` to return. 
@@ -122,11 +125,17 @@ _Blue numbered circles reference explanations above_
 
 	_The client's socket is now connected to the daemon's client-facing socket_
 
-12. Meanwhile, in the daemon, the incoming connection triggers a call to the callback function registered with the listening socket's bufferevent (`accept_cb`). `accept_cb` associates the newly created socket with the `plain.bev` bufferevent created in `connect_cb` (`associate_fd`).
+12. Meanwhile, in the daemon, the incoming connection triggers a call to the callback function registered with the listening socket's bufferevent (`accept_cb`). `accept_cb` associates the newly created socket with the `plain.bev` bufferevent created handin `connect_cb` (via `associate_fd`).
 
 	<img src="diagrams/step12.png" width="400">
 
 	_A plain-text connection is now established between the client and the daemon, which is in turn securely connected to the remote server. It is important to note, however, that from the client's perspective, it is now securely connected directly to the remote server._
+
+#### Sequence diagram
+
+<img src="diagrams/sequence_connect.png" width="1000"> 
+
+_Blue numbered circles reference explanations above_
 
 ### Part D: Sending and Receiving Data	
 

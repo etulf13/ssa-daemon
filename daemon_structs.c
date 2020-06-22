@@ -1,22 +1,19 @@
 
 #include <sys/un.h>
-#include <stdarg.h>
-#include <string.h>
 #include <unistd.h>
 
 #include <event2/bufferevent.h>
 #include <event2/dns.h>
 #include <event2/listener.h>
-#include <event2/bufferevent_ssl.h>
+#include <openssl/ocsp.h>
 #include <openssl/err.h>
 
 #include "config.h"
 #include "daemon_structs.h"
+#include "error.h"
 #include "log.h"
 #include "netlink.h"
-#include "tls_client.h"
-#include "tls_server.h"
-
+#include "socket_setup.h"
 
 #define HASHMAP_NUM_BUCKETS	100
 #define CACHE_NUM_BUCKETS 20
@@ -66,7 +63,7 @@ daemon_ctx* daemon_context_new(char* config_path, int port) {
 	if (daemon->sock_map_port == NULL)
 		goto err;
 
-	daemon->revocation_cache = hashmap_create(HASHMAP_NUM_BUCKETS);
+	daemon->revocation_cache = str_hashmap_create(HASHMAP_NUM_BUCKETS);
 	if (daemon->revocation_cache == NULL)
 		goto err;
 
@@ -110,7 +107,7 @@ void daemon_context_free(daemon_ctx* daemon) {
 		evdns_base_free(daemon->dns_base, 1);
 
 	if (daemon->revocation_cache != NULL)
-		hashmap_deep_str_free(daemon->revocation_cache, (void (*)(void*))OCSP_BASICRESP_free);
+		str_hashmap_deep_free(daemon->revocation_cache, (void (*)(void*))OCSP_BASICRESP_free);
 
 	if (daemon->settings != NULL)
         global_settings_free(daemon->settings);
@@ -152,17 +149,17 @@ int socket_context_new(socket_ctx** new_sock_ctx, int fd,
     sock_ctx->ssl_ctx = SSL_CTX_create(daemon->settings);
     if (sock_ctx->ssl_ctx == NULL) {
         /* TODO: also should return -EINVAL if settings failed to load?? */
-        response = -ENOMEM;
+        response = determine_errno_error();
         goto err;
     }
 
 	sock_ctx->daemon = daemon;
 	sock_ctx->id = id;
-	sock_ctx->fd = fd; /* standard to show not connected */
+	sock_ctx->sockfd = fd; /* standard to show not connected */
     sock_ctx->state = SOCKET_NEW;
 
-    if (!daemon->settings->revocation_checks)
-        sock_ctx->revocation.checks |= NO_REVOCATION_CHECKS;
+    /* transfer over revocation check flags */
+    sock_ctx->rev_ctx.checks = daemon->settings->revocation_checks;
 
     int ret = hashmap_add(daemon->sock_map, id, sock_ctx);
     if (ret != 0) {
@@ -193,12 +190,13 @@ socket_ctx* accepting_socket_ctx_new(socket_ctx* listener_ctx, int fd) {
 		return NULL;
 
 	sock_ctx->daemon = daemon;
-	sock_ctx->fd = fd; /* standard to show not connected */
+	sock_ctx->sockfd = fd; /* standard to show not connected */
     sock_ctx->state = SOCKET_CONNECTING;
 
     ret = SSL_CTX_up_ref(listener_ctx->ssl_ctx);
     if (ret != 1)
         goto err;
+
     sock_ctx->ssl_ctx = listener_ctx->ssl_ctx;
 
     return sock_ctx;
@@ -220,7 +218,7 @@ socket_ctx* accepting_socket_ctx_new(socket_ctx* listener_ctx, int fd) {
  */
 void socket_shutdown(socket_ctx* sock_ctx) {
 
-    revocation_context_cleanup(&sock_ctx->revocation);
+    revocation_context_cleanup(&sock_ctx->rev_ctx);
 
 	if (sock_ctx->ssl != NULL) {
 		switch (sock_ctx->state) {
@@ -251,9 +249,9 @@ void socket_shutdown(socket_ctx* sock_ctx) {
 	sock_ctx->plain.bev = NULL;
 	sock_ctx->plain.closed = 1;
 
-	if (sock_ctx->fd != -1)
-		close(sock_ctx->fd);
-	sock_ctx->fd = -1;
+	if (sock_ctx->sockfd != -1)
+		close(sock_ctx->sockfd);
+	sock_ctx->sockfd = -1;
 
 	return;
 }
@@ -273,11 +271,11 @@ void socket_context_free(socket_ctx* sock_ctx) {
 
 	if (sock_ctx->listener != NULL) {
 		evconnlistener_free(sock_ctx->listener);
-	} else if (sock_ctx->fd != -1) { 
-		EVUTIL_CLOSESOCKET(sock_ctx->fd);
+	} else if (sock_ctx->sockfd != -1) { 
+		EVUTIL_CLOSESOCKET(sock_ctx->sockfd);
 	}
 
-	revocation_context_cleanup(&sock_ctx->revocation);
+	revocation_context_cleanup(&sock_ctx->rev_ctx);
 	
     if (sock_ctx->ssl_ctx != NULL)
         SSL_CTX_free(sock_ctx->ssl_ctx);
@@ -344,8 +342,6 @@ void responder_cleanup(responder_ctx* resp) {
 	}
 }
 
-
-
 /**
  * Checks the given socket to see if it matches any of the corresponding
  * states passed into the function. If not, the error string of the connection 
@@ -379,194 +375,6 @@ int check_socket_state(socket_ctx* sock_ctx, int num, ...) {
 		set_wrong_state_err_string(sock_ctx);
 		return -EOPNOTSUPP;
 	}
-}
-
-
-/**
- * Converts the current OpenSSL ERR error code into an appropriate errno code.
- * @returns 0 if no ERR was in the queue; -1 if the error could not be converted
- * into an error code; or a positive errno code.
- */
-int ssl_err_to_errno() {
-
-	unsigned long ssl_err = ERR_peek_error();
-
-	/* TODO: stub */
-	log_printf(LOG_ERROR, "OpenSSL error occurred:\n");
-
-	switch (ERR_GET_REASON(ssl_err)) {
-	case ERR_R_MALLOC_FAILURE:
-		return ENOMEM;
-	case ERR_R_PASSED_NULL_PARAMETER:
-	case ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED:
-	case ERR_R_PASSED_INVALID_ARGUMENT:
-		return EINVAL;
-	default:
-		return ENETDOWN; /* some unrecoverable error internal to the Daemon */
-	}
-}
-
-/**
- * Verifies that a given OpenSSL operation failed because of memory issues. If 
- * memory issues were not the cause of the problem, then the cause of the 
- * problem is most likely a bug internal to the daemon (such as passing in a 
- * NULL reference), and it will print out the error information to the logs.
- * @param sock_ctx The socket for which to associate the error string with.
- * @returns -ENOMEM when insufficient memory is available, or -ENOTRECOVERABLE 
- * when an unknown failure occurred.
- */
-int ssl_malloc_err(socket_ctx* sock_ctx) {
-	
-	unsigned long ssl_err = ERR_get_error();
-	ERR_clear_error();
-
-	set_err_string(sock_ctx, "Daemon failed to allocate sufficient buffers: %s", 
-			ERR_reason_error_string(ERR_GET_REASON(ssl_err)));
-
-	if (ERR_GET_REASON(ssl_err) == ERR_R_MALLOC_FAILURE) {
-		log_printf(LOG_ERROR, "OpenSSL malloc failure caught\n");
-		set_err_string(sock_ctx, "Insufficient alloc memory for the SSA daemon");
-		return -ENOMEM;
-	} else { 
-		log_printf(LOG_ERROR, "Internal OpenSSL error on malloc attempt: %s\n",
-				ERR_error_string(ssl_err, NULL));
-		set_err_string(sock_ctx, "Internal failure; please reset daemon & report");
-		return -ENOTRECOVERABLE;
-	}
-}
-
-
-/**
- * Checks to see if the given socket has an active error string.
- * @param sock_ctx The context of the socket to check.
- * @returns 1 if an error string was found, or 0 otherwise.
- */
-int has_err_string(socket_ctx* sock_ctx) {
-	if (strlen(sock_ctx->err_string) > 0)
-		return 1;
-	else
-		return 0;
-}
-
-/**
- * Sets the error string of a given socket to reflect the reason for
- * a TLS handshake failure. Note that this may return "ok" if the handshake
- * actually passed, so the verify result should be checked to ensure that 
- * it is not equal to X509_V_OK if no error string is desired on success.
- * @param sock_ctx The context of the socket to set the error string for.
- * @param ssl_err The error code returned by SSL_get_verify_result().
- */
-void set_verification_err_string(socket_ctx* sock_ctx, unsigned long openssl_err) {
-
-	const char* err_description;
-	long cert_err = SSL_get_verify_result(sock_ctx->ssl);
-	
-
-	if (cert_err != X509_V_OK) {
-		err_description = X509_verify_cert_error_string(cert_err);
-
-		set_err_string(sock_ctx, 
-				"TLS handshake error %li: %s\n", cert_err, err_description);
-
-		log_printf(LOG_ERROR,
-				"OpenSSL verification error %li: %s\n", 
-				cert_err, err_description);
-    } else {
-		/* an error not to do with the certificate validation */
-		
-		switch (ERR_GET_REASON(openssl_err)) {
-		case SSL_R_SSLV3_ALERT_HANDSHAKE_FAILURE:
-			strncpy(sock_ctx->err_string, "TLS handshake error: server supports"
-					" none of the allowed ciphers\n", MAX_ERR_STRING);
-			break;
-
-		case SSL_R_TLSV1_ALERT_PROTOCOL_VERSION:
-			strncpy(sock_ctx->err_string, "TLS handshake error: server supports"
-					" none of the allowed TLS versions\n", MAX_ERR_STRING);
-			break;
-
-		case SSL_R_UNSUPPORTED_PROTOCOL: 
-			strncpy(sock_ctx->err_string, "TLS handshake error: server supports"
-					" none of the allowed TLS versions\n", MAX_ERR_STRING);
-			break;
-
-		default:
-			/* Add more here as needs be */
-			break;
-		}
-
-	}
-}
-
-/**
- * Sets the error string for a given socket to string (plus the additional
- * arguments added in a printf-style way).
- * @param sock_ctx The context of the socket to set an error string for.
- * @param string The printf-style string to set sock_ctx's error string to.
- */
-void set_err_string(socket_ctx* sock_ctx, char* string, ...) {
-
-	if (sock_ctx == NULL)
-		return;
-
-	va_list args;
-	clear_err_string(sock_ctx);
-
-	va_start(args, string);
-	vsnprintf(sock_ctx->err_string, MAX_ERR_STRING, string, args);
-	va_end(args);
-}
-
-/**
- * Clears the error string found in sock_ctx.
- * @param sock_ctx The conetext of the socket to clear an error string from.
- */
-void clear_err_string(socket_ctx* sock_ctx) {
-	memset(sock_ctx->err_string, '\0', MAX_ERR_STRING + 1);
-}
-
-void set_badfd_err_string(socket_ctx* sock_ctx) {
-	if (sock_ctx == NULL)
-		return;
-
-	clear_err_string(sock_ctx);
-	strncpy(sock_ctx->err_string, "SSA daemon socket error: given socket previously"
-			" failed an operation in an unrecoverable way", MAX_ERR_STRING);
-}
-
-void set_wrong_state_err_string(socket_ctx* sock_ctx) {
-	if (sock_ctx == NULL)
-		return;
-
-	clear_err_string(sock_ctx);
-	strncpy(sock_ctx->err_string, "SSA daemon error: given socket is not in the right "
-			"state to perform the requested operation", MAX_ERR_STRING);
-}
-
-
-/**
- * Associates the given file descriptor with the given connection and 
- * enables its bufferevent to read and write freely.
- * @param sock_ctx The connection to have the file descriptor associated with.
- * @param ifd The file descriptor of an internal program that will
- * communicate to the daemon through plaintext.
- * @returns 0 on success, or -ECONNABORTED on failure.
- */
-int associate_fd(socket_ctx* sock_ctx, evutil_socket_t ifd) {
-
-	/* Possibility of failure is acutally none in current libevent code */
-	if (bufferevent_setfd(sock_ctx->plain.bev, ifd) != 0)
-		goto err;
-
-	/* This function *unlikely* to fail, but if we want to be really robust...*/
-	if (bufferevent_enable(sock_ctx->plain.bev, EV_READ | EV_WRITE) != 0)
-		goto err;
-
-	log_printf(LOG_INFO, "plaintext channel bev enabled\n");
-	return 0;
- err:
-	log_printf(LOG_ERROR, "associate_fd failed.\n");
-	return -ECONNABORTED; /* Only happens while client is connecting */
 }
 
 /**

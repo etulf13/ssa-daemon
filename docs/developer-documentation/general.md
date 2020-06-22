@@ -23,6 +23,7 @@ This document contains information relevant to the SSA as a whole. For informati
     - [Sequence diagram](#sequence-diagram)
   - [Part B: Setting the hostname](#part-b-setting-the-hostname)
   - [Part C: Connecting to the endhost](#part-c-connecting-to-the-endhost)
+    - [Sequence diagram](#sequence-diagram-1)
   - [Part D: Sending and Receiving Data](#part-d-sending-and-receiving-data)
   - [Part E: Closing the socket](#part-e-closing-the-socket)
 
@@ -153,5 +154,3 @@ _Blue numbered circles reference explanations above_
 	<img src="diagrams/step15.png" width="300">
 
 	_The client-server connection is now over_
-
-## Netlink Communication

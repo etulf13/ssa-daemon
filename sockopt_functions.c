@@ -30,7 +30,7 @@ int check_key_cert_pair(socket_ctx* sock_ctx);
  * @param len The string length of the certificate.
  * @returns 0 on success; -errno otherwise.
  */
-int get_peer_certificate(socket_ctx* sock_ctx, char** data, unsigned int* len) {
+int get_peer_certificate(socket_ctx* sock_ctx, void** data, unsigned int* len) {
 	X509* cert = NULL;
 	BIO* bio = NULL;
 	char* bio_data = NULL;
@@ -88,7 +88,7 @@ int get_peer_certificate(socket_ctx* sock_ctx, char** data, unsigned int* len) {
  * @param len The length of identity.
  * @returns 0 on success; or -errno if an error occurred.
  */
-int get_peer_identity(socket_ctx* sock_ctx, char** identity, unsigned int* len) {
+int get_peer_identity(socket_ctx* sock_ctx, void** identity, unsigned int* len) {
 	
 	X509_NAME* subject_name;
 	X509* cert;
@@ -129,7 +129,7 @@ int get_peer_identity(socket_ctx* sock_ctx, char** identity, unsigned int* len) 
  * @param len The length of hostname (including the null-terminating character).
  * @returns 0 on success, or -errno if an error has occurred.
  */
-int get_hostname(socket_ctx* sock_ctx, char** data, unsigned int* len) {
+int get_hostname(socket_ctx* sock_ctx, void** data, unsigned int* len) {
 
 	const char* hostname;
 
@@ -153,7 +153,7 @@ int get_hostname(socket_ctx* sock_ctx, char** data, unsigned int* len) {
  * This should be freed after use.
  * @returns 0 on success; -errno otherwise.
  */
-int get_enabled_ciphers(socket_ctx* sock_ctx, char** data, unsigned int* len) {
+int get_enabled_ciphers(socket_ctx* sock_ctx, void** data, unsigned int* len) {
 	
 	char* ciphers_str = NULL;
 

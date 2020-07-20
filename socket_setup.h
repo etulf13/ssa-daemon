@@ -32,6 +32,8 @@ int client_SSL_new(socket_ctx* sock_ctx);
 int prepare_SSL_connection(socket_ctx* sock_ctx, int is_client);
 int prepare_bufferevents(socket_ctx* sock_ctx, int plain_fd);
 
+long get_tls_version(enum tls_version version);
+
 int associate_fd(socket_ctx* sock_ctx, evutil_socket_t ifd);
 
 

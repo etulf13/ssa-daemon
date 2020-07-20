@@ -6,6 +6,7 @@
 
 #include "hashmap.h"
 #include "hashmap_str.h"
+#include "hashmap_crl.h"
 
 #define ID_NOT_SET 0 /* for connection and sock_context id */
 #define MAX_ERR_STRING 128
@@ -100,6 +101,7 @@ struct daemon_ctx_st {
     global_config* settings;
 
 	hsmap_t* revocation_cache;
+	hcmap_t* crl_cache;
 };
 
 struct global_config_st {
@@ -221,6 +223,8 @@ void responder_cleanup(responder_ctx* resp);
 int check_socket_state(socket_ctx* sock_ctx, int num, ...);
 
 int get_port(struct sockaddr* addr);
+char* serial_dup(char* serial);
+int get_serial(char* serial, FILE* cache_ptr);
 
 
 

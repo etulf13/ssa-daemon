@@ -2,15 +2,19 @@
 #include <event2/bufferevent_ssl.h>
 #include <event2/event.h>
 #include <openssl/ocsp.h>
+#include <sys/inotify.h>
 
 #include "connection_callbacks.h"
-#include "daemon_structs.h"
+
 #include "error.h"
 #include "log.h"
 #include "netlink.h"
 #include "revocation.h"
+#include "revocation_crl.h"
 
 #define MAX_HEADER_SIZE 8192
+
+#define BUF_LEN sizeof(struct inotify_event) + NAME_MAX + 1
 
 #define MAX_OCSP_RESPONDERS 5
 #define OCSP_READ_TIMEOUT 8
@@ -425,8 +429,8 @@ void ocsp_responder_read_cb(struct bufferevent* bev, void* arg) {
 	socket_ctx* sock_ctx = resp_ctx->sock_ctx;
 
 	revocation_ctx* rev_ctx = &sock_ctx->rev_ctx;
-	daemon_ctx* daemon = sock_ctx->daemon;
-	unsigned long id = sock_ctx->id;
+	//daemon_ctx* daemon = sock_ctx->daemon;
+	//unsigned long id = sock_ctx->id;
 
 	int ret, status;
 	int num_read;
@@ -455,18 +459,18 @@ void ocsp_responder_read_cb(struct bufferevent* bev, void* arg) {
 
 		switch (status) {
 		case V_OCSP_CERTSTATUS_UNKNOWN:
-			goto err;
+			//goto err;
 
 		case V_OCSP_CERTSTATUS_GOOD:
 			revocation_context_cleanup(rev_ctx);
-			netlink_handshake_notify_kernel(daemon, id, NOTIFY_SUCCESS);
+			//netlink_handshake_notify_kernel(daemon, id, NOTIFY_SUCCESS);
 			break;
 
 		case V_OCSP_CERTSTATUS_REVOKED:
 			set_err_string(sock_ctx, "TLS handshake error: "
 					"certificate revoked (OCSP remote response)");
 			
-			fail_revocation_checks(sock_ctx);
+			//fail_revocation_checks(sock_ctx);
 			break;
 		}
 	}
@@ -514,7 +518,7 @@ void ocsp_responder_event_cb(struct bufferevent* bev, short events, void* arg) {
 	}
 
 	return;
- err:
+err:
 	if (request != NULL)
 		OCSP_REQUEST_free(request);
 	
@@ -543,7 +547,7 @@ void crl_responder_read_cb(struct bufferevent* bev, void* arg) {
 	X509 *cert, *issuer;
 	SSL* ssl = sock_ctx->ssl;
 
-	revocation_ctx* rev_ctx = &sock_ctx->revocation;
+	revocation_ctx* rev_ctx = &sock_ctx->rev_ctx;
 	daemon_ctx* daemon = sock_ctx->daemon;
 	unsigned long id = sock_ctx->id;
 
@@ -554,7 +558,7 @@ void crl_responder_read_cb(struct bufferevent* bev, void* arg) {
 			resp_ctx->buf_size - resp_ctx->tot_read);
 
 	resp_ctx->tot_read += num_read;
-
+fprintf(stderr, "%d\n", resp_ctx->tot_read);
 	if (!resp_ctx->reading_body) {
 		if (strstr((char*)resp_ctx->buffer, "\r\n\r\n") != NULL) {
 			ret = start_reading_body(resp_ctx);
@@ -568,8 +572,10 @@ void crl_responder_read_cb(struct bufferevent* bev, void* arg) {
 
 	/* A connection could be all done reading both header and body in one go */
 	if (done_reading_body(resp_ctx)) {
+fprintf(stderr, "Inside done reading body\n");
 		const unsigned char* request = resp_ctx->buffer;
 		d2i_X509_CRL(&crl, &request, resp_ctx->tot_read);
+
 		cert = SSL_get_peer_certificate(ssl);
 		if (cert == NULL)
 			goto err;
@@ -577,8 +583,8 @@ void crl_responder_read_cb(struct bufferevent* bev, void* arg) {
 		cert_chain = SSL_get_peer_cert_chain(ssl);
 		issuer = sk_X509_value(cert_chain, 1);
 
-		status = do_crl_response_checks(crl, ssl, cert, issuer, &status);
-
+		do_crl_response_checks(crl, cert, issuer, &status);
+fprintf(stderr, "Returned from CRL response checks\n");
 		switch (status) {
 		case X509_V_OK:
 			rev_ctx->crl_client_cnt--;
@@ -588,17 +594,24 @@ void crl_responder_read_cb(struct bufferevent* bev, void* arg) {
 			}
 			break;
 
+		case X509_V_ERR_CERT_REVOKED:
+			fprintf(stderr, "LOOK AT THIS\n");
 		default:
 			set_err_string(sock_ctx, "TLS handshake error: "
 					"certificate revoked (CRL remote response)");
 			
-			fail_revocation_checks(sock_ctx);
+			//fail_revocation_checks(sock_ctx);
 			break;
 		}
 	}
 
+	if (status == X509_V_OK || status == X509_V_ERR_CERT_REVOKED) {
+fprintf(stderr, "Updating the cache\n");
+		crl_cache_update(daemon->crl_cache, crl);
+}
 	return;
- err:
+
+err:
 	responder_cleanup(resp_ctx);
 
 	if (rev_ctx->num_rev_checks-- == 0) {
@@ -638,7 +651,7 @@ void crl_responder_event_cb(struct bufferevent* bev, short events, void* arg) {
 	
 	responder_cleanup(resp_ctx);
 
-	if (sock_ctx->revocation.num_rev_checks-- == 0) {
+	if (sock_ctx->rev_ctx.num_rev_checks-- == 0) {
 		set_err_string(sock_ctx, "TLS handshake failure: "
 				"the certificate's revocation status could not be determined");
 
@@ -670,6 +683,10 @@ int revocation_cb(SSL* ssl, void* arg) {
 	int crl_url_cnt = 0;
     int ret;
 
+    cert = SSL_get_peer_certificate(sock_ctx->ssl);
+    if (cert == NULL)
+        goto err;
+
 
     if (has_cached_checks(sock_ctx->rev_ctx.checks)) {
         ret = check_cached_response(sock_ctx);
@@ -685,6 +702,10 @@ int revocation_cb(SSL* ssl, void* arg) {
             return 1;
 
         } else {
+		if (check_crl_cache(sock_ctx->daemon->crl_cache, cert) == -1) {
+			set_revocation_state(sock_ctx, REV_S_FAIL);
+			return 1;
+		}
             log_printf(LOG_INFO, "No cached revocation responses were found\n");
         }
     }
@@ -704,23 +725,21 @@ int revocation_cb(SSL* ssl, void* arg) {
 		}
 	}
 
-    cert = SSL_get_peer_certificate(sock_ctx->ssl);
-    if (cert == NULL)
-        goto err;
-
     if (has_ocsp_checks(sock_ctx->rev_ctx.checks))
         ocsp_urls = retrieve_ocsp_urls(cert, &ocsp_url_cnt);
 
-    if (has_crl_checks(sock_ctx->rev_ctx.checks))
+    if (has_crl_checks(sock_ctx->rev_ctx.checks)) {
         crl_urls = retrieve_crl_urls(cert, &crl_url_cnt);
-	}
+    }
 
-    if (ocsp_url_cnt > 0)
-		launch_ocsp_checks(sock_ctx, ocsp_urls, ocsp_url_cnt);
 
-    else if (crl_url_cnt > 0)
+
+   
+
+    if (crl_url_cnt > 0)
         	launch_crl_checks(sock_ctx, crl_urls, crl_url_cnt);
-
+ else if (ocsp_url_cnt > 0)
+		launch_ocsp_checks(sock_ctx, ocsp_urls, ocsp_url_cnt);
     if (sock_ctx->rev_ctx.num_rev_checks == 0)
         goto err;
 
@@ -733,7 +752,7 @@ int revocation_cb(SSL* ssl, void* arg) {
     X509_free(cert);
 
     return 1;
- err:
+err:
     if (cert != NULL)
         X509_free(cert);
 
@@ -758,6 +777,7 @@ int revocation_cb(SSL* ssl, void* arg) {
  */
 int launch_ocsp_checks(socket_ctx* sock_ctx, char** urls, int num_urls) {
 
+fprintf(stderr, "Launch ocsp\n");
 	revocation_ctx* rev = &sock_ctx->rev_ctx;
 
 	rev->ocsp_clients = calloc(MAX_OCSP_RESPONDERS, sizeof(responder_ctx));
@@ -957,7 +977,7 @@ int send_ocsp_request(struct bufferevent* bev, char* url, OCSP_REQUEST* req) {
 
 	return -1;
 }
-
+/*
 int form_crl_http_request(char *host, char *path, char **request) {
 
 	char header[MAX_HEADER_SIZE] = {0};
@@ -966,14 +986,14 @@ int form_crl_http_request(char *host, char *path, char **request) {
 	len = snprintf(header, MAX_HEADER_SIZE,
 		"GET %s HTTP/1.1\r\n"
 		"Host: %s\r\n"
-		"Accept: */*\r\n"
+		"Accept: *//**\r\n"
 		"Accept-Encoding: identity\r\n"
 		"Connection: close\r\n"
 		"\r\n", path, host);
 
 	if (len < 0 || len >= MAX_HEADER_SIZE)
 		return -1; /* snprintf failed; or too much header */
-
+/*
 	*request = malloc(len);
 	if (*request == NULL) {
 		perror("form_http_request failed");
@@ -984,7 +1004,8 @@ int form_crl_http_request(char *host, char *path, char **request) {
 
 	return len;
 }
-
+*/
+/*
 int send_crl_request(struct bufferevent* bev, char* url, char* http_req) {
 
 	http_req = NULL;
@@ -992,7 +1013,7 @@ int send_crl_request(struct bufferevent* bev, char* url, char* http_req) {
 	char* path = NULL;
 	int ret, req_len;
 
-	ret = crl_parse_url(url, &host, NULL, &path, NULL);
+	ret = parse_url(url, &host, NULL, &path);
 	if (ret != 0)
 		goto err;
 	
@@ -1023,7 +1044,7 @@ int send_crl_request(struct bufferevent* bev, char* url, char* http_req) {
 
 	return -1;
 }
-
+*/
 /**
  * Checks to see if a given response has a a return code.
  * @param response The response to check the HTTP response code of.
@@ -1138,8 +1159,7 @@ int done_reading_body(responder_ctx* resp_ctx) {
  * @param num_ocsp_urls The number of URLs found in urls.
  */
 int launch_crl_checks(socket_ctx* sock_ctx, char** urls, int num_urls) {
-
-	revocation_ctx* rev = &sock_ctx->revocation;
+	revocation_ctx* rev = &sock_ctx->rev_ctx;
 
 	rev->crl_clients = calloc(num_urls, sizeof(responder_ctx));
 	if (rev->crl_clients == NULL)
@@ -1165,7 +1185,8 @@ int launch_crl_checks(socket_ctx* sock_ctx, char** urls, int num_urls) {
  */
 int launch_crl_client(socket_ctx* sock_ctx, char* url) {
 
-	revocation_ctx* rev = &sock_ctx->revocation;
+	fprintf(stderr, "IN LAUNCH\n");
+	revocation_ctx* rev = &sock_ctx->rev_ctx;
 	responder_ctx* crl_client = &rev->crl_clients[rev->crl_client_cnt];
 	struct bufferevent* bev = NULL;
 	char* hostname = NULL;
@@ -1222,5 +1243,38 @@ int launch_crl_client(socket_ctx* sock_ctx, char* url) {
 		free(crl_client->buffer);
 
 	return -1;
+}
+
+void inotify_cb(struct bufferevent *bev, void *arg) {
+	log_printf(LOG_DEBUG, "Read from crl_cache.txt\n");
+	//read from "crl_cache.txt", "crl_cache_info.txt"
+}
+
+int set_inotify(daemon_ctx *daemon) {
+	int inotify_fd; //, wd;
+	char buf[BUF_LEN] __attribute__ ((aligned(8)));
+
+	inotify_fd = inotify_init();
+	/*if (inotify_fd == -1) {
+		perror("inotify_init");
+		exit(EXIT_FAILURE);
+	}*/
+	evutil_make_socket_nonblocking(inotify_fd);
+
+	//wd =	
+	inotify_add_watch(inotify_fd, "crl_cache.txt", IN_CLOSE_WRITE);
+	/*if (wd == -1) {
+		perror("inotify_add_watch");
+		exit(EXIT_FAILURE);
+	}*/
+
+	struct bufferevent *bev;
+
+	bev = bufferevent_socket_new(daemon->ev_base, inotify_fd, BEV_OPT_CLOSE_ON_FREE);
+
+	bufferevent_setcb(bev, inotify_cb, NULL, NULL, &buf);
+	bufferevent_enable(bev, EV_READ);
+
+	return 0;
 }
 

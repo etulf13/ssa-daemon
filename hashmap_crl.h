@@ -25,21 +25,21 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SSA_HASHMAP_STR_H
-#define SSA_HASHMAP_STR_H
+#ifndef SSA_HASHMAP_CRL_H
+#define SSA_HASHMAP_CRL_H
 
-typedef struct hsmap {
-	struct hsnode** buckets;
+typedef struct hcmap {
+	struct hcnode** buckets;
 	int num_buckets;
 	int item_count;
-} hsmap_t;
+} hcmap_t;
 
-hsmap_t* str_hashmap_create(int num_buckets);
-void str_hashmap_free(hsmap_t* map);
-void str_hashmap_deep_free(hsmap_t* map, void (*free_func)(void*));
-int str_hashmap_add(hsmap_t* map, char* key, void* value);
-int str_hashmap_del(hsmap_t* map, char* key);
-void* str_hashmap_get(hsmap_t* map, char* key);
-void str_hashmap_print(hsmap_t* map);
+hcmap_t* crl_hashmap_create(int num_buckets);
+void crl_hashmap_free(hcmap_t* map);
+int crl_hashmap_add(hcmap_t* map, char* key, int len);
+int crl_hashmap_del(hcmap_t* map, char* key, int len);
+int crl_hashmap_get(hcmap_t* map, char* key, int len);
+void crl_hashmap_print(hcmap_t* map);
+
 
 #endif

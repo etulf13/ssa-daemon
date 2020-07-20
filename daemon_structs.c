@@ -10,15 +10,19 @@
 
 #include "config.h"
 #include "daemon_structs.h"
+#include "connection_callbacks.h"
 #include "error.h"
 #include "log.h"
 #include "netlink.h"
 #include "socket_setup.h"
+#include "revocation_crl.h"
 
 #define HASHMAP_NUM_BUCKETS	100
 #define CACHE_NUM_BUCKETS 20
 
 
+//int read_crl_cache(daemon_ctx *daemon, FILE* cache_ptr);
+int num_certs = 0;
 
 /**
  * Creates a new daemon_ctx to be used throughout the life cycle
@@ -67,6 +71,21 @@ daemon_ctx* daemon_context_new(char* config_path, int port) {
 	if (daemon->revocation_cache == NULL)
 		goto err;
 
+	set_inotify(daemon);
+
+	daemon->crl_cache = crl_hashmap_create(HASHMAP_NUM_BUCKETS * 100);
+	if (daemon->crl_cache == NULL)
+		goto err;
+
+	FILE *crl_cache = fopen("crl_cache.txt", "r");
+	if (crl_cache != NULL) {
+		read_crl_cache(daemon->crl_cache, crl_cache);
+	log_printf(LOG_DEBUG, "Returned alright\n");
+		/*if (crl_cache != NULL)
+			fclose(crl_cache);*/
+
+	}
+		
 	daemon->settings = parse_config(config_path);
 	if (daemon->settings == NULL)
 		goto err;
@@ -109,8 +128,11 @@ void daemon_context_free(daemon_ctx* daemon) {
 	if (daemon->revocation_cache != NULL)
 		str_hashmap_deep_free(daemon->revocation_cache, (void (*)(void*))OCSP_BASICRESP_free);
 
+	if (daemon->crl_cache != NULL)
+		crl_hashmap_free(daemon->crl_cache);
+
 	if (daemon->settings != NULL)
-        global_settings_free(daemon->settings);
+        	global_settings_free(daemon->settings);
 
 	if (daemon->netlink_sock != NULL)
 		netlink_disconnect(daemon->netlink_sock);
@@ -393,3 +415,39 @@ int get_port(struct sockaddr* addr) {
 	}
 	return port;
 }
+/*
+int read_crl_cache(daemon_ctx *daemon, FILE* cache_ptr) {
+	
+	char *serial_no = malloc(17 * sizeof(char));
+	char *dup;
+
+	while (get_serial(serial_no, cache_ptr)) {
+		dup = serial_dup(serial_no); //allocates memory for the string so it can be freed later
+		//fprintf(stderr, "%s\n", serial_no);
+		crl_hashmap_add(daemon->crl_cache, dup, 17);
+	}
+	fprintf(stderr, "Finished reading cache\n");
+	fclose(cache_ptr);
+	free(serial_no);
+	return 1;
+}
+
+char* serial_dup(char* serial) {
+
+	char *dup = malloc(17 * sizeof(char));
+	for (int i = 0; i < 17; i++) {
+		dup[i] = serial[i];
+	}
+	return dup;
+}
+
+int get_serial(char* serial, FILE* cache_ptr) {
+	for (int i = 0; i < 16; i++) {
+		serial[i] = fgetc(cache_ptr);
+		if (serial[i] == EOF)
+			return 0;
+	}
+	serial[16] = '\0';
+	return 1;
+}
+*/

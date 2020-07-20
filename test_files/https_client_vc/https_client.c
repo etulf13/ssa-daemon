@@ -14,8 +14,8 @@ void print_identity(int fd);
 #define ERR_BUF_SIZE 256
 #define RESPONSE_SIZE 5000
 
-	int this = 2;
-	int that = sizeof(int);
+	int opt_val;
+	int opt_len = sizeof(int);
 	int response;
 
 
@@ -34,11 +34,12 @@ int main(int argc, char* argv[]) {
 		sprintf(http_request,"GET / HTTP/1.1\r\nhost: %s\r\n\r\n", host);
 	} else {
 	       sock_fd = connect_to_host(argv[1], argv[2]);
-			response = getsockopt(sock_fd, IPPROTO_TLS, TLS_VERSION_CONN, &this, &that);
-			printf("%s\n", tls_version_str(this));
+
 	       sprintf(http_request,"GET / HTTP/1.1\r\nhost: %s\r\n\r\n", argv[1]);
 	}
 
+	response = getsockopt(sock_fd, IPPROTO_TLS, TLS_VERSION_CONN, &opt_val, &opt_len);
+	printf("Version should be 1.3... %s\n", tls_version_str(opt_val));
 	
 
 	memset(http_response, 0, 2048);
@@ -75,6 +76,7 @@ int connect_to_host(char* host, char* service) {
 	}
 	if (addr_list == NULL)
 		fprintf(stderr, "That isn't supposed to happen.\n");
+
 	fprintf(stderr, "ai_addr: %d\nai_addrlen: %d\n", addr_list->ai_addr, addr_list->ai_addrlen);
 	for (addr_ptr = addr_list; addr_ptr != NULL; addr_ptr = addr_ptr->ai_next) {
 		sock = socket(addr_ptr->ai_family, addr_ptr->ai_socktype, IPPROTO_TLS);
@@ -91,16 +93,20 @@ int connect_to_host(char* host, char* service) {
 		}
 
 
-int this = TLS_1_3;
-int that = sizeof(int);
+	int opt_val = TLS_1_3;
+	int opt_len = sizeof(int);
 
-getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, &that);
-printf("%s\n", tls_version_str(this)); 
-this = TLS_1_3;
-int response = setsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, that);
-fprintf(stderr, "%s\n", strerror(errno));
-getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &this, &that);
-printf("%s\n", tls_version_str(this)); 
+	getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &opt_val, &opt_len);
+	printf("Version should be 1.2... %s\n", tls_version_str(opt_val)); 
+
+	//opt_val = TLS_1_3;
+	opt_val = TLS_1_2;
+	int response = setsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &opt_val, opt_len);
+	if (!response)
+		fprintf(stderr, "%s\n", strerror(errno));
+
+	getsockopt(sock, IPPROTO_TLS, TLS_VERSION_MIN, &opt_val, &opt_len);
+	printf("Version should be 1.3... %s\n", tls_version_str(opt_val)); 
 
 
 
